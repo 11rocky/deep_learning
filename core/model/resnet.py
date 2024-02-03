@@ -73,11 +73,11 @@ def resnet34(num_classes, include_top=True):
     return ResNet(BasicBlock, [2, 4, 6, 3], num_classes, include_top)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     net = ResNet(BasicBlock, [2, 4, 6, 3], 10)
     x = torch.rand((1, 3, 224, 224))
     net.eval()
     y = net(x)
     torch.onnx.export(net, x, "resnet.onnx", opset_version=11,
-                      input_names=['input'], output_names=['output'])
+                      input_names=["input"], output_names=["output"])
     print(y)

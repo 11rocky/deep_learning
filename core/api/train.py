@@ -4,34 +4,31 @@ from loguru import logger
 import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
-import torch.optim as optim
 from tqdm import tqdm
+from core.utils import get_cls_in_module, get_cls_in_package
 from .storage import save_checkpoint, load_checkpoint, checkpoint_dir
 from .utils import setup, val_model
 
 
 def create_optimizer(type, params, **kwargs):
-    if type == "Adam":
-        return optim.Adam(params, **kwargs)
-    elif type == "SGD":
-        return optim.SGD(params, **kwargs)
-    return None
+    cls = get_cls_in_package("torch.optim", type, torch.optim.Optimizer)
+    return None if cls is None else cls(params, **kwargs)
 
 
 def create_scheduler(type, optimizer, **kwargs):
-    if type == "MultiStepLR":
-        return optim.lr_scheduler.MultiStepLR(optimizer, **kwargs)
-    elif type == "StepLR":
-        return optim.lr_scheduler.StepLR(optimizer, **kwargs)
-    return None
+    cls = get_cls_in_module("torch.optim.lr_scheduler", type, torch.optim.lr_scheduler.LRScheduler)
+    return None if cls is None else cls(optimizer, **kwargs)
 
 
-def resume_train(model_cfg, model, optimizer, scheduler):
-    ckp_path = getattr(model_cfg, "resume", "")
+def resume_train(ckp_path, model_cfg, model, optimizer, scheduler, loss_func):
+    ckp_file = os.path.join(ckp_path, getattr(model_cfg, "resume", ""))
+    start_epoch = 0
     try:
-        return load_checkpoint(ckp_path, model, optimizer, scheduler) + 1
+        start_epoch = load_checkpoint(ckp_file, model, optimizer, scheduler, loss_func)
+        logger.info("try to resume from: {} success", ckp_file)
     except:
-        return 0
+        logger.warning("try to resume from: {} failed", ckp_file)
+    return start_epoch
 
 
 def train(local_rank, cfg):
@@ -74,15 +71,15 @@ def train(local_rank, cfg):
             return
     model = model.to(device)
     model = DDP(model)
-    start_epoch = resume_train(model_cfg, model, optimizer, scheduler)
     loss_func = create_loss_function(learn_cfg.loss, os.path.join(cfg.output_base, "loss"))
     if loss_func is None:
         logger.error("invalid loss_func: {}", learn_cfg.loss)
         return
+    start_epoch = resume_train(ckp_dir, model_cfg, model, optimizer, scheduler, loss_func)
     for epoch in range(start_epoch, learn_cfg.epochs):
         epoch += 1
         logger.info("------------------- epoch: {}/{}, learning rate: {}", epoch, learn_cfg.epochs, scheduler.get_last_lr())
-        with tqdm(total=len(train_loader)) as batch_bar:
+        with tqdm(total=len(train_loader), colour="red") as batch_bar:
             batch_bar.set_description("training batch: ")
             model.train()
             if local_rank == 0:
@@ -101,9 +98,11 @@ def train(local_rank, cfg):
         if local_rank == 0:
             loss_func.end_log()
             if epoch % learn_cfg.validate_model_period == 0:
+                logger.info("--------------- begin validate ---------------")
                 val_model(model, val_loader, loss_func, device)
+                logger.info("--------------- end   validate ---------------")
             if epoch % learn_cfg.save_model_period == 0:
-                save_checkpoint(epoch, model, optimizer, scheduler,
+                save_checkpoint(epoch, model, optimizer, scheduler, loss_func,
                                 os.path.join(ckp_dir, "epoch_{:04}.pth".format(epoch)))
         torch.cuda.empty_cache()
         dist.barrier()

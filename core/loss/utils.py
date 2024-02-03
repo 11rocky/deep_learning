@@ -1,20 +1,11 @@
 import os
-import importlib
-import inspect
-from loguru import logger
-import torch.nn as nn
+import torch
+from core.utils import get_cls_in_module, get_cls_in_package
 
 
 def get_loss_cls(name):
-    cur_package = os.path.dirname(__file__)
-    items = os.listdir(cur_package)
-    for item in items:
-        mod = os.path.splitext(item)[0]
-        if mod == "loss":
-            continue
-        module = importlib.import_module('core.loss.{}'.format(mod))
-        for _, member in inspect.getmembers(module):
-            if inspect.isclass(member) and issubclass(member, nn.Module) and member.__name__ == name:
-                return member
-    return None
-
+    base_cls = torch.nn.modules.loss._Loss
+    cls = get_cls_in_module("torch.nn.modules.loss", name, base_cls)
+    if cls is not None:
+        return cls
+    return get_cls_in_package("core.loss", name, base_cls)

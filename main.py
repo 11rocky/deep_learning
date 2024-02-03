@@ -27,7 +27,7 @@ def main():
     opt.add_argument("--gpus", type=str, default="0", help="gpu ids, such as: 0,1,2,3")
     opt.add_argument("--port", type=int, default=4455, help="master port")
     args = opt.parse_args()
-    with open(args.config, 'r') as f:
+    with open(args.config, "r") as f:
         cfg = yaml.load(f, yaml.FullLoader)
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
     cfg = EasyDict(cfg)
@@ -39,10 +39,10 @@ def main():
         os.makedirs(cfg.output_base)
     print_env(cfg)
     if args.mode == "train":
-        from core.utils.train import train
+        from core.api.train import train
         mp.spawn(train, (cfg,), nprocs=cfg.world_size, join=True)
     else:
-        from core.utils.test import test
+        from core.api.test import test
         mp.spawn(test, (cfg,), nprocs=cfg.world_size, join=True)
 
 if __name__ == "__main__":

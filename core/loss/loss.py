@@ -1,13 +1,15 @@
 import os
+import re
 import torch.nn as nn
 from loguru import logger
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 from .utils import get_loss_cls
 
 
 class Loss(nn.Module):
     from core.data.custom_data import OutputData, InputData
-    def __init__(self, opt: str, path) -> None:
+    def __init__(self, opt: str, path: str) -> None:
         super(Loss, self).__init__()
         loss = opt.formula
         self._funcs = []
@@ -23,10 +25,18 @@ class Loss(nn.Module):
             else:
                 scale = 1.0
                 name = parts[0].strip()
-            cls = get_loss_cls(name)
+            pattern = re.compile(r"^(.+?)\s*\(\s*(.+?)\s*,\s*(.+?)\)$")
+            res = pattern.search(name)
+            if res is None:
+                inputs = None
+            else:
+                name = res[1]
+                inputs = [res[2], res[3]]
             args = getattr(opt, name, {})
+            cls = get_loss_cls(name)
+            logger.info("loss config: scale={}, name={}, inputs={}", scale, name, inputs)
             assert cls is not None, "can not get loss name={}".format(name)
-            self._funcs.append((name, scale, cls(**args)))
+            self._funcs.append((name, scale, cls(**args), inputs))
             self._losses[name] = []
             self._train_losses[name] = []
         self._losses[self._total_name] = []
@@ -36,6 +46,12 @@ class Loss(nn.Module):
         self._in_train = True
         if not os.path.exists(self._save_path):
             os.makedirs(self._save_path)
+    
+    def load_state(self, state):
+        self._train_losses = state
+
+    def state(self):
+        return self._train_losses
 
     def start_log(self, train=True):
         self._in_train = train
@@ -45,7 +61,7 @@ class Loss(nn.Module):
 
     def end_log(self):
         if self._in_train:
-            logger.info("train loss:")
+            logger.info("training loss:")
         else:
             logger.info("validate loss:")
         for name, losses in self._losses.items():
@@ -57,14 +73,21 @@ class Loss(nn.Module):
                 plt.xlabel("epoch")
                 plt.ylabel("loss")
                 epoch = len(self._train_losses[name])
-                plt.xlim(0, epoch)
-                plt.plot(list(range(0, epoch)), self._train_losses[name])
+                plt.xlim(1, epoch + 1)
+                plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
+                plt.plot([x + 1 for x in range(0, epoch)], self._train_losses[name])
                 plt.savefig(os.path.join(self._save_path, f"{name}.jpg"))
 
-    def forward(self, pred_data: OutputData, input_data: InputData):
+    def forward(self, output: OutputData, input: InputData):
         total_loss = 0
-        for (name, scale, loss_func) in self._funcs:
-            loss = scale * loss_func(pred_data, input_data)
+        for (name, scale, loss_func, inputs) in self._funcs:
+            if inputs is None:
+                loss = scale * loss_func(output, input)
+            else:
+                args = []
+                for i in inputs:
+                    args.append(eval(i))
+                loss = scale * loss_func(*args)
             self._losses[name].append(loss.item())
             total_loss += loss
         self._losses[self._total_name].append(total_loss.item())

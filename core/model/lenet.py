@@ -24,7 +24,7 @@ class LeNet(nn.Module):
         return OutputData(y)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     net = LeNet()
     x = torch.rand((1, 3, 32, 32))
     y = net(x)

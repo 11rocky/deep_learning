@@ -83,7 +83,7 @@ class GoogleNet(nn.Module):
 
         self.inception5a = Inception(832, 256, 160, 320, 32, 128, 128)
         self.inception5b = Inception(832, 384, 192, 384, 48, 128, 128)
-        print('aux logits: ', self.aux_logits)
+        print("aux logits: ", self.aux_logits)
         if self.aux_logits:
             self.aux1 = InceptionAux(512, opt.num_classes)
             self.aux2 = InceptionAux(528, opt.num_classes)
@@ -117,11 +117,11 @@ class GoogleNet(nn.Module):
             return OutputData(predict=x)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     net = GoogleNet(10)
     x = torch.rand((1, 3, 224, 224))
     net.eval()
     y = net(x)
     torch.onnx.export(net, x, "googlenet.onnx", opset_version=11,
-                      input_names=['input'], output_names=['output'])
+                      input_names=["input"], output_names=["output"])
     print(y)

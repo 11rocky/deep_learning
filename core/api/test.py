@@ -9,7 +9,7 @@ from .utils import setup, val_model
 
 def test(local_rank, cfg):
     logger.add(os.path.join(cfg.output_base,
-        "train_rank_{}_{}.log".format(local_rank, datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))))
+        "test_rank_{}_{}.log".format(local_rank, datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))))
     from core.model import create_model
     from core.loss import create_loss_function
     from core.data import create_dataloader
@@ -33,9 +33,9 @@ def test(local_rank, cfg):
         return
     model = model.to(device)
     model = DDP(model)
-    load_model(os.path.join(ckp_dir, test_cfg.checkpoint), model)
     loss_func = create_loss_function(learn_cfg.loss, os.path.join(cfg.output_base, "loss"))
     if loss_func is None:
         logger.error("invalid loss_func: {}", learn_cfg.loss)
         return
+    load_model(os.path.join(ckp_dir, test_cfg.checkpoint), model)
     val_model(model, test_loader, loss_func, device)

@@ -1,24 +1,27 @@
+import importlib
+import inspect
 import os
-import torch
-import torch.distributed as dist
 
 
-def setup(local_rank, world_size, port):
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = str(port)
-    dist.init_process_group(backend="nccl", init_method="env://", rank=local_rank, world_size=world_size)
-    torch.cuda.set_device(local_rank)
-    return torch.device("cuda", local_rank)
+def get_cls_in_module(module, name, parent_cls=object):
+    if isinstance(module, str):
+        module = importlib.import_module(module)
+    for _, member in inspect.getmembers(module):
+        if inspect.isclass(member) and issubclass(member, parent_cls) and member.__name__ == name:
+            return member
+    return None
 
 
-def val_model(model, data_loader, loss_func, device, save_fn=None):
-    model.eval()
-    loss_func.start_log(False)
-    with torch.no_grad():
-        for _, input_data in enumerate(data_loader):
-            input_data.to(device)
-            pred_data = model(input_data)
-            loss_func(pred_data, input_data)
-            if save_fn is not None:
-                save_fn(input_data, pred_data)
-    loss_func.end_log()
+def get_cls_in_package(package: str, name, parent_cls=object):
+    pkg = importlib.import_module(package)
+    items = os.listdir(os.path.dirname(pkg.__file__))
+    for item in items:
+        if item.startswith("_") or not item.endswith(".py"):
+            continue
+        mod = os.path.splitext(os.path.basename(item))[0]
+        module = importlib.import_module("{}.{}".format(package, mod))
+        cls = get_cls_in_module(module, name, parent_cls)
+        if cls is not None:
+            return cls
+    return None
+

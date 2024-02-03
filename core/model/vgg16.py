@@ -50,11 +50,11 @@ class VGG16(nn.Module):
         return OutputData(y)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     net = VGG16(10)
     x = torch.rand((1, 3, 224, 224))
     y = net(x)
     torch.onnx.export(net, x, "vgg16.onnx", opset_version=11,
-                      input_names=['input'], output_names=['output'])
+                      input_names=["input"], output_names=["output"])
     print(y)
 

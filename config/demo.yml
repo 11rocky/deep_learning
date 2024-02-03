@@ -4,7 +4,7 @@ model:
   name: ResNet
   num_classes: *num_classes
   block_num: [2, 4, 6, 3]
-  ResNet: 3
+  resume: epoch_0002.pth
 data: &data_cfg
   train: [
     ["/home/rocky/Data/flower_data/train/daisy", 0],
@@ -25,11 +25,11 @@ data: &data_cfg
   batch_size: 32
   workers: 1
 learn:
-  epochs: 4
-  save_model_period: 2
-  validate_model_period: 2
+  epochs: 100
+  save_model_period: 5
+  validate_model_period: 5
   loss:
-    formula: CrossEntropyLoss
+    formula: CrossEntropyLoss(output.predict,input.label)
   optimizer:
     type: Adam
   lr_scheduler:

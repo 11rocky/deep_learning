@@ -42,7 +42,7 @@ class AlexNet(nn.Module):
         return OutputData(output)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     net = AlexNet(5)
     x = torch.rand((1, 3, 224, 224))
     y = net(x)
