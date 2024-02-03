@@ -17,7 +17,7 @@ class Loss(nn.Module):
         self._train_losses = {}
         self._total_name = "Total"
         funcs = loss.split("+")
-        for func in funcs:
+        for idx, func in enumerate(funcs):
             parts = func.strip().split("*")
             if len(parts) == 2:
                 scale = float(parts[0].strip())
@@ -25,6 +25,8 @@ class Loss(nn.Module):
             else:
                 scale = 1.0
                 name = parts[0].strip()
+            only_train = name.endswith("?")
+            name = name.replace("?", "")
             pattern = re.compile(r"^(.+?)\s*\(\s*(.+?)\s*,\s*(.+?)\)$")
             res = pattern.search(name)
             if res is None:
@@ -34,11 +36,11 @@ class Loss(nn.Module):
                 inputs = [res[2], res[3]]
             args = getattr(opt, name, {})
             cls = get_loss_cls(name)
-            logger.info("loss config: scale={}, name={}, inputs={}", scale, name, inputs)
+            logger.info("loss config: scale={}, name={}, inputs={}, only_train={}", scale, name, inputs, only_train)
             assert cls is not None, "can not get loss name={}".format(name)
-            self._funcs.append((name, scale, cls(**args), inputs))
-            self._losses[name] = []
-            self._train_losses[name] = []
+            self._funcs.append((name, scale, cls(**args), inputs, only_train))
+            self._losses[f"{name}_{idx}"] = []
+            self._train_losses[f"{name}_{idx}"] = []
         self._losses[self._total_name] = []
         self._train_losses[self._total_name] = []
         self._cal_times = 0
@@ -80,15 +82,18 @@ class Loss(nn.Module):
 
     def forward(self, output: OutputData, input: InputData):
         total_loss = 0
-        for (name, scale, loss_func, inputs) in self._funcs:
+        for idx, (name, scale, loss_func, inputs, only_train) in enumerate(self._funcs):
+            if only_train and not self._in_train:
+                continue
             if inputs is None:
                 loss = scale * loss_func(output, input)
             else:
                 args = []
                 for i in inputs:
                     args.append(eval(i))
+                    assert args[-1] is not None, f"{i} is none"
                 loss = scale * loss_func(*args)
-            self._losses[name].append(loss.item())
+            self._losses[f"{name}_{idx}"].append(loss.item())
             total_loss += loss
         self._losses[self._total_name].append(total_loss.item())
         self._cal_times += 1

@@ -1,0 +1,49 @@
+num_classes: &num_classes 5
+
+model:
+  name: GoogleNet
+  num_classes: *num_classes
+  aux_logits: true
+data: &data_cfg
+  train: [
+    ["/home/rocky/Data/flower_data/train/daisy", 0],
+    ["/home/rocky/Data/flower_data/train/dandelion", 1],
+    ["/home/rocky/Data/flower_data/train/roses", 2],
+    ["/home/rocky/Data/flower_data/train/sunflowers", 3],
+    ["/home/rocky/Data/flower_data/train/tulips", 4],
+  ]
+  validate: [
+    ["/home/rocky/Data/flower_data/val/daisy", 0],
+    ["/home/rocky/Data/flower_data/val/dandelion", 1],
+    ["/home/rocky/Data/flower_data/val/roses", 2],
+    ["/home/rocky/Data/flower_data/val/sunflowers", 3],
+    ["/home/rocky/Data/flower_data/val/tulips", 4],
+  ]
+  dataset: FlowerDataset
+  num_classes: *num_classes
+  batch_size: 32
+  workers: 1
+learn:
+  epochs: 50
+  save_model_period: 5
+  validate_model_period: 5
+  loss:
+    formula: CrossEntropyLoss(output.predict,input.label)+CrossEntropyLoss(output.aux_logits1,input.label)?+CrossEntropyLoss(output.aux_logits2,input.label)?
+  optimizer:
+    type: Adam
+  lr_scheduler:
+    type: StepLR
+    args:
+      step_size: 10
+      gamma: 0.1
+test:
+  checkpoint: epoch_0005.pth
+  data:
+    <<: *data_cfg
+    test: [
+      ["/home/rocky/Data/flower_data/val/daisy", 0],
+      ["/home/rocky/Data/flower_data/val/dandelion", 1],
+      ["/home/rocky/Data/flower_data/val/roses", 2],
+      ["/home/rocky/Data/flower_data/val/sunflowers", 3],
+      ["/home/rocky/Data/flower_data/val/tulips", 4],
+    ]
