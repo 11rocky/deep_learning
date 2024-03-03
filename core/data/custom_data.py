@@ -1,6 +1,7 @@
 import dataclasses
 from dataclasses import dataclass
 import torch
+import numpy as np
 
 
 @dataclass
@@ -22,12 +23,14 @@ class InputData:
         return cls(**batch_data)
 
     def to(self, *args, **kwargs):
-        items = {}
-        for key, value in self.__dict__.items():
-            if isinstance(value, torch.Tensor) and value is not None:
-                items[key] = value.to(*args, **kwargs)
-        for key, value in items.items():
-            setattr(self, key, value) 
+        data_dict = dataclasses.asdict(self)
+        for key, value in data_dict.items():
+            if value is None:
+                continue
+            if isinstance(value, torch.Tensor):
+                setattr(self, key, value.to(*args, **kwargs))
+            elif isinstance(value, np.ndarray):
+                setattr(self, key, torch.from_numpy(value).to(*args, **kwargs))
         return self
 
 

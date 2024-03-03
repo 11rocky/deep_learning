@@ -2,12 +2,16 @@ import os
 import datetime
 from loguru import logger
 import torch
+from torch.nn import SyncBatchNorm
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
 from tqdm import tqdm
+from core.model import create_model
+from core.loss import create_loss_function
+from core.data import create_dataloader
 from core.utils import get_cls_in_module, get_cls_in_package
 from .storage import save_checkpoint, load_checkpoint, checkpoint_dir
-from .utils import setup, val_model
+from .utils import init_dist, validate_model
 
 
 def create_optimizer(type, params, **kwargs):
@@ -20,11 +24,11 @@ def create_scheduler(type, optimizer, **kwargs):
     return None if cls is None else cls(optimizer, **kwargs)
 
 
-def resume_train(ckp_path, model_cfg, model, optimizer, scheduler, loss_func):
+def resume_train(ckp_path, model_cfg, model, optimizer, scheduler, train_loss_func):
     ckp_file = os.path.join(ckp_path, getattr(model_cfg, "resume", ""))
     start_epoch = 0
     try:
-        start_epoch = load_checkpoint(ckp_file, model, optimizer, scheduler, loss_func)
+        start_epoch = load_checkpoint(ckp_file, model, optimizer, scheduler, train_loss_func)
         logger.info("try to resume from: {} success", ckp_file)
     except:
         logger.warning("try to resume from: {} failed", ckp_file)
@@ -32,18 +36,16 @@ def resume_train(ckp_path, model_cfg, model, optimizer, scheduler, loss_func):
 
 
 def train(local_rank, cfg):
-    logger.add(os.path.join(cfg.output_base,
-        "train_rank_{}_{}.log".format(local_rank, datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))))
-    from core.model import create_model
-    from core.loss import create_loss_function
-    from core.data import create_dataloader
+    init_dist(local_rank, cfg)
+    logger.add(os.path.join(cfg.output_train,
+        "train_rank_{}_{}.log".format(cfg.rank, datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))))
+    device = torch.device("cuda", local_rank)
 
-    device = setup(local_rank, cfg.world_size, cfg.port)
     ckp_dir = checkpoint_dir(cfg)
-
     model_cfg = cfg.model
     data_cfg = cfg.data
     learn_cfg = cfg.learn
+
     train_loader = create_dataloader(data_cfg.train, data_cfg, True)
     if train_loader is None:
         logger.error("invalid train_loader")
@@ -70,40 +72,51 @@ def train(local_rank, cfg):
             logger.error("invalid scheduler")
             return
     model = model.to(device)
-    model = DDP(model)
-    loss_func = create_loss_function(learn_cfg.loss, os.path.join(cfg.output_base, "loss"))
-    if loss_func is None:
-        logger.error("invalid loss_func: {}", learn_cfg.loss)
+    if cfg.sync_bn:
+        model = SyncBatchNorm.convert_sync_batchnorm(model)
+    model = DDP(model, device_ids=[local_rank])
+    train_loss_func = create_loss_function(learn_cfg.loss, os.path.join(cfg.output_train, "loss"),
+                                           cfg.world_size, True)
+    if train_loss_func is None:
+        logger.error("invalid train_loss_func: {}", learn_cfg.loss)
         return
-    start_epoch = resume_train(ckp_dir, model_cfg, model, optimizer, scheduler, loss_func)
+    val_loss_func = create_loss_function(learn_cfg.loss, os.path.join(cfg.output_train, "loss"),
+                                           cfg.world_size, False)
+    start_epoch = resume_train(ckp_dir, model_cfg, model, optimizer, scheduler, train_loss_func)
     for epoch in range(start_epoch, learn_cfg.epochs):
         epoch += 1
-        logger.info("------------------- epoch: {}/{}, learning rate: {}", epoch, learn_cfg.epochs, scheduler.get_last_lr())
+        logger.info("------------------- epoch: {}/{}, learning rate: {}",
+                    epoch, learn_cfg.epochs, scheduler.get_last_lr())
+        train_loss_func.reset()
         with tqdm(total=len(train_loader), colour="red") as batch_bar:
-            batch_bar.set_description("training batch: ")
             model.train()
-            if local_rank == 0:
-                loss_func.start_log()
+            if cfg.rank == 0:
+                batch_bar.set_description("training batch: ")
             for _, input_data in enumerate(train_loader):
                 input_data.to(device)
                 optimizer.zero_grad()
                 output_data = model(input_data)
-                loss = loss_func(output_data, input_data)
+                loss = train_loss_func(output_data, input_data)
+                dist.barrier()
+                train_loss_func.summary()
                 loss.backward()
                 optimizer.step()
-                batch_bar.update(1)
+                if cfg.rank == 0:
+                    batch_bar.update(1)
             if scheduler is not None:
                 scheduler.step()
-
-        if local_rank == 0:
-            loss_func.end_log()
-            if epoch % learn_cfg.validate_model_period == 0:
-                logger.info("--------------- begin validate ---------------")
-                val_model(model, val_loader, loss_func, device)
-                logger.info("--------------- end   validate ---------------")
+        if cfg.rank == 0:
+            train_loss_func.record()
             if epoch % learn_cfg.save_model_period == 0:
-                save_checkpoint(epoch, model, optimizer, scheduler, loss_func,
-                                os.path.join(ckp_dir, "epoch_{:04}.pth".format(epoch)))
+                save_checkpoint(epoch, model, optimizer, scheduler, train_loss_func,
+                                os.path.join(ckp_dir, "epoch_{:05}.pth".format(epoch)))
+
+        if epoch % learn_cfg.validate_model_period == 0:
+            if cfg.rank == 0:
+                logger.info("--------------- begin validate ---------------")
+            validate_model(model, val_loader, val_loss_func, device)
+            if cfg.rank == 0:
+                logger.info("--------------- end   validate ---------------")
         torch.cuda.empty_cache()
         dist.barrier()
     dist.destroy_process_group()

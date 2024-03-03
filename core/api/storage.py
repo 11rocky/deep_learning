@@ -3,7 +3,7 @@ import torch
 
 
 def checkpoint_dir(cfg):
-    return os.path.join(cfg.output_base, "checkpoints")
+    return os.path.join(cfg.output_train, "checkpoints")
 
 
 def save_checkpoint(epoch, model, optimizer, scheduler, loss_func, path):
@@ -14,7 +14,7 @@ def save_checkpoint(epoch, model, optimizer, scheduler, loss_func, path):
         "epoch": epoch,
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
-        "loss": loss_func.state()
+        "loss": loss_func.get_losses()
     }
     if scheduler is not None:
         checkpoint["scheduler"] = scheduler.state_dict()
@@ -25,7 +25,7 @@ def load_checkpoint(path, model, optimizer, scheduler, loss_func):
     checkpoint = torch.load(path)
     model.load_state_dict(checkpoint["model"])
     optimizer.load_state_dict(checkpoint["optimizer"])
-    loss_func.load_state(checkpoint["loss"])
+    loss_func.load_losses(checkpoint["loss"])
     if scheduler is not None:
         scheduler.load_state_dict(checkpoint["scheduler"])
     return checkpoint["epoch"]
@@ -33,4 +33,7 @@ def load_checkpoint(path, model, optimizer, scheduler, loss_func):
 
 def load_model(path, model: torch.nn.Module):
     checkpoint = torch.load(path)
-    model.load_state_dict(checkpoint["model"])
+    try:
+        model.load_state_dict(checkpoint["model"])
+    except:
+        model.load_state_dict({k.replace('module.','') : v for k, v in checkpoint["model"].items()})

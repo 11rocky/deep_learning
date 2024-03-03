@@ -22,10 +22,10 @@ data: &data_cfg
   ]
   dataset: FlowerDataset
   num_classes: *num_classes
-  batch_size: 32
+  batch_size: 100
   workers: 1
 learn:
-  epochs: 100
+  epochs: 5
   save_model_period: 5
   validate_model_period: 5
   loss:
@@ -36,9 +36,9 @@ learn:
     type: StepLR
     args:
       step_size: 10
-      gamma: 0.1
+      gamma: 0.01
 test:
-  checkpoint: epoch_0002.pth
+  checkpoint: epoch_00005.pth
   data:
     <<: *data_cfg
     test: [

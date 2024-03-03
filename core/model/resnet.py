@@ -56,9 +56,8 @@ class ResNet(nn.Module):
         for _ in range(1, block_num):
             layers.append(block(self.in_chnl, chnl))
         return nn.Sequential(*layers)
-
-    def forward(self, data: InputData) -> OutputData:
-        x = data.input
+    
+    def _forward(self, x):
         x = self.maxpool(F.relu(self.bn1(self.conv1(x)), True))
         x = self.layer1(x)
         x = self.layer2(x)
@@ -66,8 +65,13 @@ class ResNet(nn.Module):
         x = self.layer4(x)
         if self.include_top:
             x = self.linear(torch.flatten(self.avgpool(x), 1))
-        return OutputData(x)
+        return x
 
+    def forward(self, data: InputData) -> OutputData:
+        return OutputData(self._forward(data.input))
+
+    def onnx_forward(self, x):
+        return self._forward(x)
 
 def resnet34(num_classes, include_top=True):
     return ResNet(BasicBlock, [2, 4, 6, 3], num_classes, include_top)

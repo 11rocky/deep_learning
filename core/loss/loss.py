@@ -1,6 +1,8 @@
 import os
 import re
+import torch
 import torch.nn as nn
+import torch.distributed as dist
 from loguru import logger
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
@@ -9,12 +11,14 @@ from .utils import get_loss_cls
 
 class Loss(nn.Module):
     from core.data.custom_data import OutputData, InputData
-    def __init__(self, opt: str, path: str) -> None:
+    def __init__(self, opt, path: str, nprocs: int, train_mode: bool) -> None:
         super(Loss, self).__init__()
+        self.nprocs = nprocs
+        self.train_mode = train_mode
         loss = opt.formula
         self._funcs = []
         self._losses = {}
-        self._train_losses = {}
+        self._losses_history = {}
         self._total_name = "Total"
         funcs = loss.split("+")
         for idx, func in enumerate(funcs):
@@ -38,53 +42,58 @@ class Loss(nn.Module):
             cls = get_loss_cls(name)
             logger.info("loss config: scale={}, name={}, inputs={}, only_train={}", scale, name, inputs, only_train)
             assert cls is not None, "can not get loss name={}".format(name)
-            self._funcs.append((name, scale, cls(**args), inputs, only_train))
+            if only_train and not train_mode:
+                continue
+            self._funcs.append((name, scale, cls(**args), inputs))
             self._losses[f"{name}_{idx}"] = []
-            self._train_losses[f"{name}_{idx}"] = []
+            self._losses_history[f"{name}_{idx}"] = []
         self._losses[self._total_name] = []
-        self._train_losses[self._total_name] = []
-        self._cal_times = 0
-        self._save_path = path
-        self._in_train = True
+        self._losses_history[self._total_name] = []
+        self._save_path = os.path.join(path, "train" if train_mode else "validate")
         if not os.path.exists(self._save_path):
             os.makedirs(self._save_path)
+
+    def load_losses(self, history):
+        self._losses_history = history
     
-    def load_state(self, state):
-        self._train_losses = state
+    def get_losses(self):
+        return self._losses_history
 
-    def state(self):
-        return self._train_losses
+    def reset(self):
+        for name in self._losses.keys():
+            self._losses[name] = []
 
-    def start_log(self, train=True):
-        self._in_train = train
-        for loss in self._losses.values():
-            loss.clear()
-        self._cal_times = 0
-
-    def end_log(self):
-        if self._in_train:
-            logger.info("training loss:")
-        else:
-            logger.info("validate loss:")
+    def record(self):
         for name, losses in self._losses.items():
-            loss = sum(losses) / self._cal_times
+            loss = sum(losses) / len(losses)
             logger.info("  {}: {}", name, loss)
-            if self._in_train:
-                self._train_losses[name].append(loss)
-                plt.clf()
-                plt.xlabel("epoch")
-                plt.ylabel("loss")
-                epoch = len(self._train_losses[name])
-                plt.xlim(1, epoch + 1)
-                plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
-                plt.plot([x + 1 for x in range(0, epoch)], self._train_losses[name])
-                plt.savefig(os.path.join(self._save_path, f"{name}.jpg"))
+            self._losses_history[name].append(loss)
+            plt.clf()
+            plt.xlabel("epoch")
+            plt.ylabel("loss")
+            epoch = len(self._losses_history[name])
+            plt.xlim(1, epoch + 1)
+            plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
+            plt.plot([x + 1 for x in range(0, epoch)], self._losses_history[name])
+            plt.savefig(os.path.join(self._save_path, f"{name}.jpg"))
+
+    def summary(self):
+        def reduce_mean(loss: torch.Tensor):
+            rt = loss.clone()
+            dist.all_reduce(rt, op=dist.ReduceOp.SUM)
+            rt /= self.nprocs
+            return rt
+
+        mean_losses = {}
+        for name, loss in self._losses.items():
+            mean_loss = reduce_mean(loss[-1])
+            mean_losses[name] = mean_loss
+        for name, loss in mean_losses.items():
+            self._losses[name][-1] = mean_loss.item()
 
     def forward(self, output: OutputData, input: InputData):
         total_loss = 0
-        for idx, (name, scale, loss_func, inputs, only_train) in enumerate(self._funcs):
-            if only_train and not self._in_train:
-                continue
+        for idx, (name, scale, loss_func, inputs) in enumerate(self._funcs):
             if inputs is None:
                 loss = scale * loss_func(output, input)
             else:
@@ -93,12 +102,11 @@ class Loss(nn.Module):
                     args.append(eval(i))
                     assert args[-1] is not None, f"{i} is none"
                 loss = scale * loss_func(*args)
-            self._losses[f"{name}_{idx}"].append(loss.item())
+            self._losses[f"{name}_{idx}"].append(loss)
             total_loss += loss
-        self._losses[self._total_name].append(total_loss.item())
-        self._cal_times += 1
+        self._losses[self._total_name].append(total_loss)
         return total_loss
 
 
-def create_loss_function(opt, save_path):
-    return Loss(opt, save_path)
+def create_loss_function(opt, save_path, nproc, train_mode):
+    return Loss(opt, save_path, nproc, train_mode)
